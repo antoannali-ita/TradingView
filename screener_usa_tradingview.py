@@ -35,6 +35,7 @@ import yfinance as yf
 from common_utility.mailer import send_email
 
 
+
 # ============================================================
 # UTILS
 # ============================================================
