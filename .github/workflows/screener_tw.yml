@@ -37,12 +37,3 @@ jobs:
           PYTHONPATH: ${{ github.workspace }}
         run: |
           python screener_usa_tradingview.py
-```
-
-La differenza chiave è il secondo step che fa il checkout di `common_utility` nella cartella `path: common_utility`. Così nella runner trovi esattamente:
-```
-TradingView/
-├── screener_usa_tradingview.py
-└── common_utility/
-    ├── __init__.py
-    └── mailer.py
