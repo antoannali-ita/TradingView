@@ -23,10 +23,18 @@ jobs:
         run: |
           pip install tradingview-screener yfinance pandas numpy -q
 
+      - name: 📂 Debug (verifica common_utility)
+        run: |
+          pwd
+          ls -la
+          find . -maxdepth 4 -type d -name "common_utility" -print
+          find . -maxdepth 4 -type f -name "mailer.py" -print
+
       - name: 🚀 Esegui Screener
         env:
           GMAIL_SENDER: ${{ secrets.GMAIL_SENDER }}
           GMAIL_RECIPIENT: ${{ secrets.GMAIL_RECIPIENT }}
           GMAIL_PASSWORD: ${{ secrets.GMAIL_PASSWORD }}
+          PYTHONPATH: ${{ github.workspace }}
         run: |
           python screener_usa_tradingview.py
