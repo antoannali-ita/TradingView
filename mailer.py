@@ -7,9 +7,9 @@ from email.mime.multipart import MIMEMultipart
 
 @dataclass(frozen=True)
 class MailConfig:
-    sender:  "antoannali@gmail.com"
-    password: "szld tsrz wwcg nqvs"   # password per app Gmail
-    recipient:  "antoannali@gmail.com"
+    sender: str
+    password: str   # password per app Gmail
+    recipient: str
 
 def load_config() -> MailConfig:
     sender = os.getenv("GMAIL_SENDER", "")
