@@ -1,4 +1,4 @@
-- name: 🚀 Esegui Screener
+- name: 🚀 Esegui Screener USA
   env:
     GMAIL_SENDER: ${{ secrets.GMAIL_SENDER }}
     GMAIL_RECIPIENT: ${{ secrets.GMAIL_RECIPIENT }}
