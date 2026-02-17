@@ -2,7 +2,6 @@ name: 📊 Stock Screener USA Giornaliero
 
 on:
   schedule:
-    # Ogni giorno lavorativo alle 18:00 CET (16:00 UTC)
     - cron: '0 16 * * 1-5'
   workflow_dispatch:
 
@@ -11,11 +10,20 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: 📥 Checkout repository
-        uses: actions/checkout@v3
+      # Checkout repo TradingView (quello dove sta lo screener)
+      - name: 📥 Checkout TradingView
+        uses: actions/checkout@v4
+
+      # Checkout repo common_utility dentro la cartella "common_utility"
+      - name: 📥 Checkout common_utility
+        uses: actions/checkout@v4
+        with:
+          repository: antoannali-ita/common_utility
+          path: common_utility
+          token: ${{ secrets.GH_PAT }}
 
       - name: 🐍 Setup Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
@@ -23,12 +31,12 @@ jobs:
         run: |
           pip install tradingview-screener yfinance pandas numpy -q
 
-      - name: 📂 Debug (verifica common_utility)
+      - name: 📂 Debug (vedi cosa c'è nel runner)
         run: |
           pwd
           ls -la
-          find . -maxdepth 4 -type d -name "common_utility" -print
-          find . -maxdepth 4 -type f -name "mailer.py" -print
+          ls -la common_utility
+          find . -maxdepth 3 -type f -name "mailer.py" -print
 
       - name: 🚀 Esegui Screener
         env:
