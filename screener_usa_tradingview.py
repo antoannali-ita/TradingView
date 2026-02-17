@@ -405,9 +405,9 @@ def generate_html(stocks: list[dict], skipped_notes: list[str]) -> str:
     from datetime import datetime
     today = datetime.now().strftime("%d/%m/%Y")
 
-    def fmt_price(v): return f"${v:,.2f}" if v else "N/A"
-    def fmt_pct(v): return f"{v:+.1f}%" if v else "N/A"
-    def fmt_num(v, decimals=1): return f"{v:.{decimals}f}" if v else "N/A"
+    def fmt_price(v): return f"${v:,.2f}" if v is not None and v != 0 else "N/A"
+    def fmt_pct(v): return f"{v:+.1f}%" if v is not None else "N/A"
+    def fmt_num(v, decimals=1): return f"{v:.{decimals}f}" if v is not None else "N/A"
     def pct_color(v): return "#16a34a" if v >= 0 else "#dc2626"
     def tv_link(ticker): return f"https://www.tradingview.com/chart/?symbol={ticker}"
 
@@ -636,7 +636,8 @@ def generate_html(stocks: list[dict], skipped_notes: list[str]) -> str:
 
         <!-- FOOTER -->
         <div style="text-align:center;padding:16px;color:#9ca3af;font-size:11px;border-top:1px solid #e5e7eb;margin-top:8px;">
-          Report generato automaticamente · Solo a scopo informativo · Non costituisce consulenza finanziaria
+          Report generato automaticamente · Solo a scopo informativo · Non costituisce consulenza finanziaria<br>
+          <span style="font-size:11px;color:#6b7280;font-style:italic;">Script ideato e scritto da Antonio Larocca · Tutti i diritti riservati 😄</span>
         </div>
 
         {skipped_html}
@@ -645,7 +646,6 @@ def generate_html(stocks: list[dict], skipped_notes: list[str]) -> str:
     </body>
     </html>
     """
-
 
 # ============================================================
 # 5) MAIN
