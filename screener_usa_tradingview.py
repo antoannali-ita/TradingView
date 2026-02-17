@@ -33,7 +33,7 @@ warnings.filterwarnings('ignore')
 
 EMAIL_CONFIG = {
     'sender': 'antoannali@gmail.com',
-    'password': os.getenv('GMAIL_PASSWORD', ''),
+    'password': os.getenv('GMAIL_PASSWORD', 'szld tsrz wwcg nqvs'),
     'recipient': 'antoannali@gmail.com',
 }
 
