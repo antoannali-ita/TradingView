@@ -1,0 +1,6 @@
+- name: 🚀 Esegui Screener
+  env:
+    GMAIL_SENDER: ${{ secrets.GMAIL_SENDER }}
+    GMAIL_RECIPIENT: ${{ secrets.GMAIL_RECIPIENT }}
+    GMAIL_PASSWORD: ${{ secrets.GMAIL_PASSWORD }}
+  run: python screener_usa_tradingview.py
