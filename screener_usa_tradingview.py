@@ -30,6 +30,7 @@ warnings.filterwarnings("ignore")
 
 # TradingView screener
 from tradingview_screener import Query, Column
+from common_utility.mailer import send_email
 
 # Yahoo Finance
 import yfinance as yf
