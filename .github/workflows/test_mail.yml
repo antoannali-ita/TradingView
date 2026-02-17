@@ -1,0 +1,29 @@
+name: 📧 Test Mail
+
+on:
+  workflow_dispatch:  # lo lanci a mano
+
+jobs:
+  send-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Send test email
+        env:
+          GMAIL_SENDER: ${{ secrets.GMAIL_SENDER }}
+          GMAIL_RECIPIENT: ${{ secrets.GMAIL_RECIPIENT }}
+          GMAIL_PASSWORD: ${{ secrets.GMAIL_PASSWORD }}
+        run: |
+          python - << 'PY'
+          from mailer import send_email
+          ok = send_email("📧 TEST GitHub Actions", "Mail inviata da GitHub Actions.")
+          print("OK" if ok else "KO")
+          PY
