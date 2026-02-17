@@ -2,29 +2,31 @@ name: 📊 Stock Screener USA Giornaliero
 
 on:
   schedule:
-    # Ogni giorno lavorativo alle 18:00 CET (16:00 UTC, dopo chiusura NYSE)
+    # Ogni giorno lavorativo alle 18:00 CET (16:00 UTC)
     - cron: '0 16 * * 1-5'
-  workflow_dispatch:   # Esecuzione manuale dal bottone GitHub
+  workflow_dispatch:
 
 jobs:
   screener:
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: 📥 Checkout repository
         uses: actions/checkout@v3
-      
+
       - name: 🐍 Setup Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.11'
-      
+
       - name: 📦 Installa dipendenze
         run: |
           pip install tradingview-screener yfinance pandas numpy -q
-      
+
       - name: 🚀 Esegui Screener
         env:
+          GMAIL_SENDER: ${{ secrets.GMAIL_SENDER }}
+          GMAIL_RECIPIENT: ${{ secrets.GMAIL_RECIPIENT }}
           GMAIL_PASSWORD: ${{ secrets.GMAIL_PASSWORD }}
         run: |
           python screener_usa_tradingview.py
