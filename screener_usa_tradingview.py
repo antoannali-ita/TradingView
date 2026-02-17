@@ -401,37 +401,33 @@ def build_top5(df_tv: pd.DataFrame) -> list[dict]:
 # 4) EMAIL HTML (semplice + nota campi rimossi)
 # ============================================================
 
+# ============================================================
+# FILTRO SETTORE DA AGGIUNGERE IN run_tradingview_screener_robust()
+# Aggiungi questo filtro nella lista "filters":
+#
+#   ("Escludi Finance", ["sector"],
+#    lambda: Column("sector") != "Finance"),
+#
+# ============================================================
+
+
 def generate_html(stocks: list[dict], skipped_notes: list[str]) -> str:
     from datetime import datetime
     today = datetime.now().strftime("%d/%m/%Y")
 
-    # ── Helpers formato ──────────────────────────────────────────
     def fmt_price(v):
-        return f"${v:,.2f}" if v is not None and v != 0.0 else None
+        return f"${v:,.2f}" if v and v != 0.0 else "—"
 
     def fmt_pct(v):
-        return f"{v:+.1f}%" if v is not None and v != 0.0 else None
-
-    def fmt_num(v, decimals=1):
-        return f"{v:.{decimals}f}" if v is not None and v != 0.0 else None
+        if v is None: return "—"
+        return f"{v:+.1f}%"
 
     def pct_color(v):
-        if v is None: return "#374151"
+        if v is None or v == 0: return "#374151"
         return "#16a34a" if v >= 0 else "#dc2626"
 
     def tv_link(ticker):
         return f"https://www.tradingview.com/chart/?symbol={ticker}"
-
-    # Genera riga tabella SOLO se il valore è disponibile
-    def row(label, value, color=None):
-        if value is None:
-            return ""  # nasconde la riga
-        style = f"color:{color};" if color else ""
-        return f"""
-        <tr>
-          <td style="font-size:12px;color:#6b7280;padding:3px 0;">{label}</td>
-          <td style="font-size:12px;font-weight:600;text-align:right;{style}">{value}</td>
-        </tr>"""
 
     def sentiment_badge(s):
         if "Forte Acquisto" in s:
@@ -442,7 +438,7 @@ def generate_html(stocks: list[dict], skipped_notes: list[str]) -> str:
             color, bg = "#b45309", "#fef9c3"
         else:
             color, bg = "#dc2626", "#fee2e2"
-        return f'<span style="background:{bg};color:{color};padding:4px 12px;border-radius:20px;font-weight:700;font-size:13px;">{s}</span>'
+        return f'<span style="background:{bg};color:{color};padding:3px 10px;border-radius:20px;font-weight:700;font-size:11px;white-space:nowrap;">{s}</span>'
 
     def score_bar(score):
         pct = min(score, 100)
@@ -450,13 +446,129 @@ def generate_html(stocks: list[dict], skipped_notes: list[str]) -> str:
         elif pct >= 55: bar_color = "#84cc16"
         elif pct >= 40: bar_color = "#f59e0b"
         else:           bar_color = "#ef4444"
-        return f"""
-        <div style="background:#e5e7eb;border-radius:6px;height:8px;width:100%;">
-          <div style="background:{bar_color};width:{pct}%;height:8px;border-radius:6px;"></div>
-        </div>
-        <div style="font-size:11px;color:#6b7280;margin-top:3px;">Score: {score}/100</div>"""
+        return f"""<div style="display:flex;align-items:center;gap:6px;">
+          <div style="background:#e5e7eb;border-radius:4px;height:6px;width:60px;flex-shrink:0;">
+            <div style="background:{bar_color};width:{pct}%;height:6px;border-radius:4px;"></div>
+          </div>
+          <span style="font-size:11px;color:#6b7280;">{score}</span>
+        </div>"""
 
-    # ── Tutti i filtri applicati (sempre mostrati in fondo) ──────
+    # ── Righe tabella ──────────────────────────────────────────
+    rows_html = ""
+    for i, s in enumerate(stocks):
+        rank      = i + 1
+        ticker    = s.get("ticker", "")
+        company   = s.get("company_name", ticker)
+        sector    = s.get("sector", "—")
+        score     = s.get("score", 0)
+        sentiment = s.get("sentiment", "")
+
+        price     = s.get("price") or 0
+        target    = s.get("target") or 0
+        upside    = s.get("upside") or 0
+
+        sup1      = s.get("support_1") or 0
+        sup2      = s.get("support_2") or 0
+        res1      = s.get("resistance_1") or 0
+        res2      = s.get("resistance_2") or 0
+
+        perf_6m   = s.get("perf_6m")
+        pe        = s.get("pe") or 0
+        roe       = s.get("roe") or 0
+        eps_growth= s.get("eps_growth") or 0
+        rsi       = s.get("rsi") or 0
+        volume    = s.get("volume") or 0
+
+        # prezzo acquisto consigliato = supporto 1 (primo livello chiave sotto il prezzo)
+        buy_price = sup1 if sup1 and sup1 < price else price * 0.97
+        buy_upside = ((target / buy_price) - 1) * 100 if buy_price and target else upside
+
+        bg = "#f8fafc" if i % 2 == 0 else "#ffffff"
+        upside_c = pct_color(buy_upside)
+        perf_c   = pct_color(perf_6m)
+
+        vol_fmt = f"{volume/1_000_000:.1f}M" if volume >= 1_000_000 else f"{volume:,.0f}"
+
+        rows_html += f"""
+        <tr style="background:{bg};border-bottom:1px solid #e5e7eb;">
+
+          <!-- RANK + TICKER -->
+          <td style="padding:14px 12px;white-space:nowrap;">
+            <div style="display:flex;align-items:center;gap:10px;">
+              <span style="background:#1e3a5f;color:#ffffff;border-radius:50%;width:24px;height:24px;display:inline-flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0;">#{rank}</span>
+              <div>
+                <div style="font-weight:800;font-size:14px;color:#1e3a5f;">
+                  <a href="{tv_link(ticker)}" style="color:#1e3a5f;text-decoration:none;">{ticker}</a>
+                </div>
+                <div style="font-size:11px;color:#6b7280;max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{company}</div>
+              </div>
+            </div>
+          </td>
+
+          <!-- SETTORE -->
+          <td style="padding:14px 10px;">
+            <span style="background:#eff6ff;color:#1d4ed8;padding:3px 8px;border-radius:4px;font-size:11px;font-weight:600;white-space:nowrap;">{sector}</span>
+          </td>
+
+          <!-- PREZZO ATTUALE -->
+          <td style="padding:14px 10px;text-align:right;">
+            <div style="font-weight:700;font-size:14px;color:#111827;">{fmt_price(price)}</div>
+            <div style="font-size:11px;color:{perf_c};">{fmt_pct(perf_6m)} 6M</div>
+          </td>
+
+          <!-- SUPPORTI -->
+          <td style="padding:14px 10px;text-align:right;">
+            <div style="font-size:12px;">
+              <span style="color:#16a34a;font-weight:600;">S1</span>
+              <span style="color:#374151;font-weight:700;margin-left:4px;">{fmt_price(sup1)}</span>
+            </div>
+            <div style="font-size:12px;margin-top:2px;">
+              <span style="color:#15803d;font-weight:600;">S2</span>
+              <span style="color:#374151;font-weight:700;margin-left:4px;">{fmt_price(sup2)}</span>
+            </div>
+          </td>
+
+          <!-- RESISTENZE -->
+          <td style="padding:14px 10px;text-align:right;">
+            <div style="font-size:12px;">
+              <span style="color:#f97316;font-weight:600;">R1</span>
+              <span style="color:#374151;font-weight:700;margin-left:4px;">{fmt_price(res1)}</span>
+            </div>
+            <div style="font-size:12px;margin-top:2px;">
+              <span style="color:#dc2626;font-weight:600;">R2</span>
+              <span style="color:#374151;font-weight:700;margin-left:4px;">{fmt_price(res2)}</span>
+            </div>
+          </td>
+
+          <!-- PREZZO ACQUISTO CONSIGLIATO -->
+          <td style="padding:14px 10px;text-align:right;">
+            <div style="font-weight:700;font-size:13px;color:#2563eb;">{fmt_price(buy_price)}</div>
+            <div style="font-size:10px;color:#6b7280;">zona ingresso</div>
+          </td>
+
+          <!-- TARGET + UPSIDE -->
+          <td style="padding:14px 10px;text-align:right;">
+            <div style="font-weight:700;font-size:13px;color:#15803d;">{fmt_price(target)}</div>
+            <div style="font-size:12px;font-weight:700;color:{upside_c};">{fmt_pct(buy_upside)}</div>
+          </td>
+
+          <!-- SCORE + GIUDIZIO -->
+          <td style="padding:14px 12px;text-align:center;">
+            {score_bar(score)}
+            <div style="margin-top:6px;">{sentiment_badge(sentiment)}</div>
+          </td>
+
+          <!-- LINK TV -->
+          <td style="padding:14px 10px;text-align:center;">
+            <a href="{tv_link(ticker)}"
+               style="background:linear-gradient(135deg,#1e3a5f,#2563eb);color:#ffffff;padding:6px 12px;border-radius:6px;text-decoration:none;font-size:11px;font-weight:600;white-space:nowrap;">
+              📊 Grafico
+            </a>
+          </td>
+
+        </tr>"""
+
+    # ── Filtri applicati in fondo ──────────────────────────────
     ALL_FILTERS = [
         ("Market Cap",             "> $10B"),
         ("EPS Growth YoY TTM",     "> 10%"),
@@ -472,223 +584,86 @@ def generate_html(stocks: list[dict], skipped_notes: list[str]) -> str:
         ("RSI",                    "tra 45 e 75"),
         ("Volume",                 "> 2.000.000"),
         ("P/E (TTM)",              "tra 10 e 45"),
+        ("Settore",                "tutti escluso Finance"),
     ]
 
-    # ── Cards ────────────────────────────────────────────────────
-    cards_html = ""
-    for i, s in enumerate(stocks):
-        rank     = i + 1
-        ticker   = s.get("ticker", "")
-        company  = s.get("company_name", ticker)
-        sector   = s.get("sector", "N/A")
-        score    = s.get("score", 0)
-        sentiment = s.get("sentiment", "")
-
-        price      = s.get("price") or 0
-        target     = s.get("target") or 0
-        upside     = s.get("upside") or 0
-        target_src = s.get("target_source", "Stima")
-        timeframe  = s.get("timeframe", "")
-        vol        = s.get("vol_annual") or 0
-
-        pe            = s.get("pe")
-        fpe           = s.get("forward_pe")
-        peg           = s.get("peg")
-        roe           = s.get("roe")
-        roic          = s.get("roic")
-        op_margin     = s.get("op_margin")
-        profit_margin = s.get("profit_margin")
-        debt_eq       = s.get("debt_eq")
-        rev_growth    = s.get("rev_growth")
-        eps_growth    = s.get("eps_growth")
-        div_yield     = s.get("div_yield")
-        mcap          = s.get("mcap")
-
-        ma50         = s.get("ma50")
-        ma200        = s.get("ma200")
-        rsi          = s.get("rsi")
-        rsi_trend    = s.get("rsi_trend", "")
-        perf_6m      = s.get("perf_6m")
-        perf_3m      = s.get("perf_3m")
-        dist_52w     = s.get("dist_52w")
-        high_52w     = s.get("high_52w")
-        low_52w      = s.get("low_52w")
-        volume_trend = s.get("volume_trend", "")
-
-        sup1 = s.get("support_1")
-        sup2 = s.get("support_2")
-        res1 = s.get("resistance_1")
-        res2 = s.get("resistance_2")
-
-        # Righe fondamentali (mostrate solo se hanno valore)
-        fund_rows = (
-            row("Market Cap",    f"${mcap:.1f}B" if mcap else None)
-          + row("P/E (TTM)",     fmt_num(pe))
-          + row("Forward P/E",   fmt_num(fpe))
-          + row("PEG Ratio",     fmt_num(peg, 2))
-          + row("ROE",           f"{fmt_num(roe)}%" if fmt_num(roe) else None)
-          + row("ROIC",          f"{fmt_num(roic)}%" if fmt_num(roic) else None)
-          + row("Op. Margin",    f"{fmt_num(op_margin)}%" if fmt_num(op_margin) else None)
-          + row("Profit Margin", f"{fmt_num(profit_margin)}%" if fmt_num(profit_margin) else None)
-          + row("Debt/Equity",   fmt_num(debt_eq, 2))
-          + row("Rev. Growth YoY", fmt_pct(rev_growth), pct_color(rev_growth))
-          + row("EPS Growth YoY",  fmt_pct(eps_growth), pct_color(eps_growth))
-          + row("Dividend Yield",  f"{fmt_num(div_yield)}%" if fmt_num(div_yield) else None)
-        )
-
-        # Righe tecniche
-        tech_rows = (
-            row("Perf. 6 Mesi",    fmt_pct(perf_6m),  pct_color(perf_6m))
-          + row("Perf. 3 Mesi",    fmt_pct(perf_3m),  pct_color(perf_3m))
-          + row("RSI (14)",        f"{fmt_num(rsi)} {rsi_trend}" if fmt_num(rsi) else None)
-          + row("MA 50",           fmt_price(ma50))
-          + row("MA 200",          fmt_price(ma200))
-          + row("Max 52 sett.",    fmt_price(high_52w))
-          + row("Min 52 sett.",    fmt_price(low_52w))
-          + row("Dist. da Max 52w",fmt_pct(dist_52w), pct_color(dist_52w))
-          + row("Volume trend",    volume_trend if volume_trend else None)
-        )
-
-        # Livelli chiave (solo se disponibili)
-        def level_row(emoji, label, color, value):
-            v = fmt_price(value)
-            if not v: return ""
-            return f"""<tr>
-              <td style="font-size:11px;color:{color};font-weight:600;">{emoji} {label}</td>
-              <td style="font-size:11px;font-weight:700;text-align:right;color:{color};">{v}</td>
-            </tr>"""
-
-        livelli = (
-            level_row("🔴", "Res. 2", "#dc2626", res2)
-          + level_row("🟠", "Res. 1", "#f97316", res1)
-          + f"""<tr><td colspan="2" style="text-align:center;padding:4px 0;">
-              <span style="background:#dbeafe;color:#1d4ed8;padding:2px 10px;border-radius:10px;font-size:11px;font-weight:700;">
-                ▶ PREZZO: {fmt_price(price) or "N/A"}
-              </span></td></tr>"""
-          + level_row("🟢", "Sup. 1", "#16a34a", sup1)
-          + level_row("🟢", "Sup. 2", "#15803d", sup2)
-        )
-
-        cards_html += f"""
-        <div style="background:#ffffff;border-radius:12px;box-shadow:0 2px 12px rgba(0,0,0,0.08);margin-bottom:28px;overflow:hidden;border:1px solid #e5e7eb;">
-
-          <!-- HEADER -->
-          <div style="background:linear-gradient(135deg,#1e3a5f 0%,#2563eb 100%);padding:20px 24px;">
-            <table width="100%"><tr>
-              <td style="vertical-align:top;">
-                <div style="color:#93c5fd;font-size:12px;font-weight:600;">#{rank} &nbsp;·&nbsp; {sector}</div>
-                <div style="color:#ffffff;font-size:22px;font-weight:800;margin-top:4px;">{ticker}</div>
-                <div style="color:#bfdbfe;font-size:13px;">{company}</div>
-              </td>
-              <td style="vertical-align:top;text-align:right;">
-                <div style="color:#ffffff;font-size:26px;font-weight:800;">{fmt_price(price) or "N/A"}</div>
-                <div style="margin-top:6px;">{sentiment_badge(sentiment)}</div>
-                <div style="margin-top:8px;">
-                  <a href="{tv_link(ticker)}" style="background:rgba(255,255,255,0.15);color:#ffffff;padding:5px 14px;border-radius:20px;text-decoration:none;font-size:12px;font-weight:600;">
-                    📊 Apri su TradingView →
-                  </a>
-                </div>
-              </td>
-            </tr></table>
-          </div>
-
-          <!-- SCORE -->
-          <div style="padding:12px 24px;background:#f8fafc;border-bottom:1px solid #e5e7eb;">
-            {score_bar(score)}
-          </div>
-
-          <div style="padding:20px 24px;">
-
-            <!-- TARGET -->
-            <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:14px 18px;margin-bottom:18px;">
-              <table width="100%"><tr>
-                <td style="vertical-align:top;">
-                  <div style="font-size:11px;color:#6b7280;font-weight:600;text-transform:uppercase;">Target Price</div>
-                  <div style="font-size:22px;font-weight:800;color:#15803d;">{fmt_price(target) or "N/A"}</div>
-                  <div style="font-size:11px;color:#6b7280;">Fonte: {target_src} · {timeframe}</div>
-                </td>
-                <td style="vertical-align:top;text-align:right;">
-                  <div style="font-size:11px;color:#6b7280;font-weight:600;text-transform:uppercase;">Upside</div>
-                  <div style="font-size:28px;font-weight:800;color:{pct_color(upside)};">{fmt_pct(upside) or "N/A"}</div>
-                  <div style="font-size:11px;color:#6b7280;">Volatilità: {f"{vol:.1f}%" if vol else "N/A"}</div>
-                </td>
-              </tr></table>
-            </div>
-
-            <!-- 2 COLONNE -->
-            <table width="100%" cellpadding="0" cellspacing="0">
-              <tr>
-                <td width="50%" style="padding-right:10px;vertical-align:top;">
-                  <div style="background:#f8fafc;border-radius:8px;padding:14px;">
-                    <div style="font-size:12px;font-weight:700;color:#1e3a5f;text-transform:uppercase;letter-spacing:0.5px;padding-bottom:6px;border-bottom:1px solid #e5e7eb;margin-bottom:8px;">📊 Fondamentali</div>
-                    <table width="100%">{fund_rows}</table>
-                  </div>
-                </td>
-                <td width="50%" style="padding-left:10px;vertical-align:top;">
-                  <div style="background:#f8fafc;border-radius:8px;padding:14px;">
-                    <div style="font-size:12px;font-weight:700;color:#1e3a5f;text-transform:uppercase;letter-spacing:0.5px;padding-bottom:6px;border-bottom:1px solid #e5e7eb;margin-bottom:8px;">📈 Analisi Tecnica</div>
-                    <table width="100%">{tech_rows}</table>
-                    <div style="margin-top:12px;border-top:1px solid #e5e7eb;padding-top:8px;">
-                      <div style="font-size:11px;font-weight:700;color:#1e3a5f;text-transform:uppercase;margin-bottom:6px;">Livelli Chiave</div>
-                      <table width="100%">{livelli}</table>
-                    </div>
-                  </div>
-                </td>
-              </tr>
-            </table>
-
-          </div>
-        </div>"""
-
-    # ── Sezione filtri in fondo ───────────────────────────────────
-    filtri_ok_rows = "".join(
-        f"<tr><td style='font-size:12px;color:#374151;padding:4px 8px;'>✅ {name}</td>"
-        f"<td style='font-size:12px;color:#6b7280;padding:4px 8px;'>{cond}</td></tr>"
+    filtri_badges = "".join(
+        f'<span style="background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe;padding:4px 10px;border-radius:20px;font-size:11px;font-weight:600;margin:3px;">'
+        f'✅ {name}: {cond}</span>'
         for name, cond in ALL_FILTERS
     )
 
-    filtri_saltati_rows = ""
+    saltati_html = ""
     if skipped_notes:
-        filtri_saltati_rows = (
-            "<tr><td colspan='2' style='padding:10px 8px 4px;'>"
-            "<div style='font-size:12px;font-weight:700;color:#b45309;margin-bottom:4px;'>⚠️ Non applicati (campo non disponibile):</div>"
-            + "".join(
-                f"<div style='font-size:12px;color:#92400e;margin-bottom:3px;'>• {n}</div>"
-                for n in skipped_notes
-            )
-            + "</td></tr>"
+        saltati_badges = "".join(
+            f'<span style="background:#fef9c3;color:#92400e;border:1px solid #fde68a;padding:4px 10px;border-radius:20px;font-size:11px;font-weight:600;margin:3px;">⚠️ {n}</span>'
+            for n in skipped_notes
         )
-
-    filtri_section = f"""
-    <div style="background:#ffffff;border-radius:12px;border:1px solid #e5e7eb;padding:20px 24px;margin-top:8px;">
-      <div style="font-size:14px;font-weight:700;color:#1e3a5f;margin-bottom:12px;">🔍 Filtri Screener Applicati</div>
-      <table width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;">
-        <tr style="background:#f1f5f9;">
-          <td style="font-size:11px;font-weight:700;color:#6b7280;padding:6px 8px;text-transform:uppercase;width:60%;">Filtro</td>
-          <td style="font-size:11px;font-weight:700;color:#6b7280;padding:6px 8px;text-transform:uppercase;">Condizione</td>
-        </tr>
-        {filtri_ok_rows}
-        {filtri_saltati_rows}
-      </table>
-    </div>"""
+        saltati_html = f"""
+        <div style="margin-top:10px;">
+          <div style="font-size:12px;font-weight:700;color:#b45309;margin-bottom:6px;">Non applicati:</div>
+          <div style="display:flex;flex-wrap:wrap;">{saltati_badges}</div>
+        </div>"""
 
     return f"""<!DOCTYPE html>
 <html>
-<head><meta charset="UTF-8"></head>
-<body style="margin:0;padding:0;background:#f1f5f9;font-family:'Segoe UI',Helvetica,Arial,sans-serif;">
-<div style="max-width:680px;margin:0 auto;padding:24px 16px;">
+<head><meta charset="UTF-8">
+<style>
+  * {{ box-sizing: border-box; }}
+  body {{ margin:0;padding:0;background:#f1f5f9;font-family:'Segoe UI',Helvetica,Arial,sans-serif; }}
+  table {{ border-collapse:collapse;width:100%; }}
+  th {{ position:sticky;top:0; }}
+</style>
+</head>
+<body>
+<div style="max-width:900px;margin:0 auto;padding:24px 16px;">
 
-  <div style="background:linear-gradient(135deg,#1e3a5f 0%,#2563eb 100%);border-radius:12px;padding:28px 32px;margin-bottom:24px;text-align:center;">
-    <div style="font-size:32px;margin-bottom:8px;">🇺🇸</div>
-    <div style="color:#ffffff;font-size:24px;font-weight:800;">Top 5 Azioni USA</div>
-    <div style="color:#93c5fd;font-size:14px;margin-top:6px;">{today} &nbsp;·&nbsp; Large Cap &nbsp;·&nbsp; Momentum + Quality</div>
+  <!-- HEADER -->
+  <div style="background:linear-gradient(135deg,#1e3a5f 0%,#2563eb 100%);border-radius:12px;padding:24px 32px;margin-bottom:20px;text-align:center;">
+    <div style="font-size:28px;margin-bottom:6px;">🇺🇸</div>
+    <div style="color:#ffffff;font-size:22px;font-weight:800;">Top 5 Azioni USA</div>
+    <div style="color:#93c5fd;font-size:13px;margin-top:4px;">{today} &nbsp;·&nbsp; Large Cap &nbsp;·&nbsp; Momentum + Quality &nbsp;·&nbsp; Escluso Finance</div>
   </div>
 
-  {cards_html}
+  <!-- TABELLA -->
+  <div style="background:#ffffff;border-radius:12px;box-shadow:0 2px 12px rgba(0,0,0,0.08);overflow:hidden;border:1px solid #e5e7eb;">
+    <table>
+      <thead>
+        <tr style="background:linear-gradient(135deg,#1e3a5f,#2563eb);">
+          <th style="padding:12px 12px;text-align:left;color:#93c5fd;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;">Ticker / Azione</th>
+          <th style="padding:12px 10px;text-align:left;color:#93c5fd;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;">Settore</th>
+          <th style="padding:12px 10px;text-align:right;color:#93c5fd;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;">Prezzo</th>
+          <th style="padding:12px 10px;text-align:right;color:#93c5fd;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;">Supporti</th>
+          <th style="padding:12px 10px;text-align:right;color:#93c5fd;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;">Resistenze</th>
+          <th style="padding:12px 10px;text-align:right;color:#93c5fd;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;">Acquisto</th>
+          <th style="padding:12px 10px;text-align:right;color:#93c5fd;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;">Target / Upside</th>
+          <th style="padding:12px 12px;text-align:center;color:#93c5fd;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;">Score</th>
+          <th style="padding:12px 10px;text-align:center;color:#93c5fd;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;">Grafico</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows_html}
+      </tbody>
+    </table>
+  </div>
 
-  {filtri_section}
+  <!-- LEGENDA COLONNE -->
+  <div style="background:#ffffff;border-radius:8px;border:1px solid #e5e7eb;padding:14px 18px;margin-top:16px;font-size:11px;color:#6b7280;">
+    <span style="font-weight:700;color:#374151;">Legenda: </span>
+    <span style="margin-right:12px;"><b>Acquisto</b> = zona ingresso consigliata (Supporto 1 o -3% dal prezzo)</span>
+    <span style="margin-right:12px;"><b>Upside</b> = guadagno potenziale da zona acquisto a target</span>
+    <span><b>S1/S2</b> = supporti · <b>R1/R2</b> = resistenze</span>
+  </div>
 
-  <div style="text-align:center;padding:20px;color:#9ca3af;font-size:11px;margin-top:16px;border-top:1px solid #e5e7eb;">
+  <!-- FILTRI -->
+  <div style="background:#ffffff;border-radius:8px;border:1px solid #e5e7eb;padding:16px 18px;margin-top:12px;">
+    <div style="font-size:13px;font-weight:700;color:#1e3a5f;margin-bottom:10px;">🔍 Filtri Screener Applicati</div>
+    <div style="display:flex;flex-wrap:wrap;">{filtri_badges}</div>
+    {saltati_html}
+  </div>
+
+  <!-- FOOTER -->
+  <div style="text-align:center;padding:18px;color:#9ca3af;font-size:11px;margin-top:12px;">
     Report generato automaticamente · Solo a scopo informativo · Non costituisce consulenza finanziaria<br>
     <span style="font-style:italic;color:#6b7280;">Script ideato e scritto da Antonio Larocca · Tutti i diritti riservati 😄</span>
   </div>
@@ -696,6 +671,7 @@ def generate_html(stocks: list[dict], skipped_notes: list[str]) -> str:
 </div>
 </body>
 </html>"""
+
 
 # ============================================================
 # 5) MAIN
