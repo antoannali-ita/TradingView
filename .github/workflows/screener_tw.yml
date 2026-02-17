@@ -10,33 +10,24 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # Checkout repo TradingView (quello dove sta lo screener)
       - name: 📥 Checkout TradingView
-        uses: actions/checkout@v4
+        uses: actions/checkout@v3
 
-      # Checkout repo common_utility dentro la cartella "common_utility"
       - name: 📥 Checkout common_utility
-        uses: actions/checkout@v4
+        uses: actions/checkout@v3
         with:
           repository: antoannali-ita/common_utility
+          token: ${{ secrets.GITHUB_TOKEN }}
           path: common_utility
-          token: ${{ secrets.GH_PAT }}
 
       - name: 🐍 Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v4
         with:
           python-version: '3.11'
 
       - name: 📦 Installa dipendenze
         run: |
           pip install tradingview-screener yfinance pandas numpy -q
-
-      - name: 📂 Debug (vedi cosa c'è nel runner)
-        run: |
-          pwd
-          ls -la
-          ls -la common_utility
-          find . -maxdepth 3 -type f -name "mailer.py" -print
 
       - name: 🚀 Esegui Screener
         env:
@@ -46,3 +37,12 @@ jobs:
           PYTHONPATH: ${{ github.workspace }}
         run: |
           python screener_usa_tradingview.py
+```
+
+La differenza chiave è il secondo step che fa il checkout di `common_utility` nella cartella `path: common_utility`. Così nella runner trovi esattamente:
+```
+TradingView/
+├── screener_usa_tradingview.py
+└── common_utility/
+    ├── __init__.py
+    └── mailer.py
