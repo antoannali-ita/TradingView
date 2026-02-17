@@ -401,48 +401,248 @@ def build_top5(df_tv: pd.DataFrame) -> list[dict]:
 # 4) EMAIL HTML (semplice + nota campi rimossi)
 # ============================================================
 
-def generate_html(stocks: list[dict], removed_fields: list[str]) -> str:
-    """HTML minimale: tabella + nota finale campi rimossi."""
+def generate_html(stocks: list[dict], skipped_notes: list[str]) -> str:
+    from datetime import datetime
     today = datetime.now().strftime("%d/%m/%Y")
 
-    rows = ""
-    for i, s in enumerate(stocks, start=1):
-        rows += (
-            f"<tr>"
-            f"<td>#{i}</td>"
-            f"<td><b>{s['ticker']}</b></td>"
-            f"<td>{s['sector']}</td>"
-            f"<td>{s['score']}</td>"
-            f"<td>{s['sentiment']}</td>"
-            f"<td>${s['price']:.2f}</td>"
-            f"<td>${s['target']:.2f}</td>"
-            f"<td>+{s['upside']:.1f}%</td>"
-            f"</tr>"
-        )
+    def fmt_price(v): return f"${v:,.2f}" if v else "N/A"
+    def fmt_pct(v): return f"{v:+.1f}%" if v else "N/A"
+    def fmt_num(v, decimals=1): return f"{v:.{decimals}f}" if v else "N/A"
+    def pct_color(v): return "#16a34a" if v >= 0 else "#dc2626"
+    def tv_link(ticker): return f"https://www.tradingview.com/chart/?symbol={ticker}"
 
-    note = ""
-    if removed_fields:
-        note = (
-            "<hr>"
-            "<p style='font-size:12px;color:#6b7280;'>"
-            "<b>Nota:</b> alcuni campi TradingView non erano disponibili e sono stati ignorati: "
-            f"{', '.join(sorted(set(removed_fields)))}"
-            "</p>"
-        )
+    def sentiment_badge(s):
+        if "Forte Acquisto" in s:
+            color = "#16a34a"; bg = "#dcfce7"
+        elif "Acquista" in s:
+            color = "#15803d"; bg = "#f0fdf4"
+        elif "Mantieni" in s:
+            color = "#b45309"; bg = "#fef9c3"
+        else:
+            color = "#dc2626"; bg = "#fee2e2"
+        return f'<span style="background:{bg};color:{color};padding:4px 12px;border-radius:20px;font-weight:700;font-size:13px;">{s}</span>'
+
+    def score_bar(score):
+        pct = min(score, 100)
+        if pct >= 70: bar_color = "#16a34a"
+        elif pct >= 55: bar_color = "#84cc16"
+        elif pct >= 40: bar_color = "#f59e0b"
+        else: bar_color = "#ef4444"
+        return f'''
+        <div style="background:#e5e7eb;border-radius:6px;height:8px;width:100%;margin-top:4px;">
+          <div style="background:{bar_color};width:{pct}%;height:8px;border-radius:6px;"></div>
+        </div>
+        <div style="font-size:11px;color:#6b7280;margin-top:2px;">Score: {score}/100</div>
+        '''
+
+    cards_html = ""
+    for i, s in enumerate(stocks):
+        rank = i + 1
+        ticker = s.get("ticker", "")
+        company = s.get("company_name", ticker)
+        sector = s.get("sector", "N/A")
+        sentiment = s.get("sentiment", "")
+        score = s.get("score", 0)
+
+        price = s.get("price", 0)
+        target = s.get("target", 0)
+        upside = s.get("upside", 0)
+        target_src = s.get("target_source", "")
+        timeframe = s.get("timeframe", "")
+        vol = s.get("vol_annual", 0)
+
+        pe = s.get("pe", 0)
+        fpe = s.get("forward_pe", 0)
+        peg = s.get("peg", 0)
+        roe = s.get("roe", 0)
+        roic = s.get("roic", 0)
+        op_margin = s.get("op_margin", 0)
+        profit_margin = s.get("profit_margin", 0)
+        debt_eq = s.get("debt_eq", 0)
+        rev_growth = s.get("rev_growth", 0)
+        eps_growth = s.get("eps_growth", 0)
+        div_yield = s.get("div_yield", 0)
+        mcap = s.get("mcap", 0)
+
+        ma50 = s.get("ma50", 0)
+        ma200 = s.get("ma200", 0)
+        rsi = s.get("rsi", 0)
+        rsi_trend = s.get("rsi_trend", "")
+        perf_6m = s.get("perf_6m", 0)
+        perf_3m = s.get("perf_3m", 0)
+        dist_52w = s.get("dist_52w", 0)
+        high_52w = s.get("high_52w", 0)
+        low_52w = s.get("low_52w", 0)
+        volume_trend = s.get("volume_trend", "")
+
+        sup1 = s.get("support_1", 0)
+        sup2 = s.get("support_2", 0)
+        res1 = s.get("resistance_1", 0)
+        res2 = s.get("resistance_2", 0)
+
+        upside_color = pct_color(upside)
+        perf6_color = pct_color(perf_6m)
+        perf3_color = pct_color(perf_3m)
+
+        cards_html += f"""
+        <div style="background:#ffffff;border-radius:12px;box-shadow:0 2px 12px rgba(0,0,0,0.08);margin-bottom:28px;overflow:hidden;border:1px solid #e5e7eb;">
+
+          <!-- HEADER -->
+          <div style="background:linear-gradient(135deg,#1e3a5f 0%,#2563eb 100%);padding:20px 24px;display:flex;align-items:center;justify-content:space-between;">
+            <div>
+              <div style="color:#93c5fd;font-size:12px;font-weight:600;letter-spacing:1px;">#{rank} &nbsp;·&nbsp; {sector}</div>
+              <div style="color:#ffffff;font-size:22px;font-weight:800;margin-top:4px;">{ticker}</div>
+              <div style="color:#bfdbfe;font-size:13px;margin-top:2px;">{company}</div>
+            </div>
+            <div style="text-align:right;">
+              <div style="color:#ffffff;font-size:26px;font-weight:800;">{fmt_price(price)}</div>
+              <div style="margin-top:6px;">{sentiment_badge(sentiment)}</div>
+              <div style="margin-top:8px;">
+                <a href="{tv_link(ticker)}" style="background:rgba(255,255,255,0.15);color:#ffffff;padding:5px 14px;border-radius:20px;text-decoration:none;font-size:12px;font-weight:600;">
+                  📊 Apri su TradingView →
+                </a>
+              </div>
+            </div>
+          </div>
+
+          <!-- SCORE BAR -->
+          <div style="padding:14px 24px 10px;background:#f8fafc;border-bottom:1px solid #e5e7eb;">
+            {score_bar(score)}
+          </div>
+
+          <div style="padding:20px 24px;">
+
+            <!-- TARGET -->
+            <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:14px 18px;margin-bottom:18px;display:flex;justify-content:space-between;align-items:center;">
+              <div>
+                <div style="font-size:11px;color:#6b7280;font-weight:600;text-transform:uppercase;">Target Price</div>
+                <div style="font-size:22px;font-weight:800;color:#15803d;">{fmt_price(target)}</div>
+                <div style="font-size:11px;color:#6b7280;margin-top:2px;">Fonte: {target_src} · {timeframe}</div>
+              </div>
+              <div style="text-align:right;">
+                <div style="font-size:11px;color:#6b7280;font-weight:600;text-transform:uppercase;">Upside Potenziale</div>
+                <div style="font-size:28px;font-weight:800;color:{upside_color};">{fmt_pct(upside)}</div>
+                <div style="font-size:11px;color:#6b7280;">Volatilità annua: {fmt_num(vol)}%</div>
+              </div>
+            </div>
+
+            <!-- 2 COLONNE -->
+            <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:18px;">
+              <tr>
+
+                <!-- FONDAMENTALI -->
+                <td width="50%" style="padding-right:10px;vertical-align:top;">
+                  <div style="background:#f8fafc;border-radius:8px;padding:14px;">
+                    <div style="font-size:12px;font-weight:700;color:#1e3a5f;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:10px;border-bottom:1px solid #e5e7eb;padding-bottom:6px;">📊 Fondamentali</div>
+                    <table width="100%" cellpadding="3">
+                      <tr><td style="font-size:12px;color:#6b7280;">Market Cap</td><td style="font-size:12px;font-weight:600;text-align:right;">${mcap:.1f}B</td></tr>
+                      <tr><td style="font-size:12px;color:#6b7280;">P/E (TTM)</td><td style="font-size:12px;font-weight:600;text-align:right;">{fmt_num(pe)}</td></tr>
+                      <tr><td style="font-size:12px;color:#6b7280;">Forward P/E</td><td style="font-size:12px;font-weight:600;text-align:right;">{fmt_num(fpe)}</td></tr>
+                      <tr><td style="font-size:12px;color:#6b7280;">PEG Ratio</td><td style="font-size:12px;font-weight:600;text-align:right;">{fmt_num(peg, 2)}</td></tr>
+                      <tr><td style="font-size:12px;color:#6b7280;">ROE</td><td style="font-size:12px;font-weight:600;text-align:right;">{fmt_num(roe)}%</td></tr>
+                      <tr><td style="font-size:12px;color:#6b7280;">ROIC</td><td style="font-size:12px;font-weight:600;text-align:right;">{fmt_num(roic)}%</td></tr>
+                      <tr><td style="font-size:12px;color:#6b7280;">Op. Margin</td><td style="font-size:12px;font-weight:600;text-align:right;">{fmt_num(op_margin)}%</td></tr>
+                      <tr><td style="font-size:12px;color:#6b7280;">Profit Margin</td><td style="font-size:12px;font-weight:600;text-align:right;">{fmt_num(profit_margin)}%</td></tr>
+                      <tr><td style="font-size:12px;color:#6b7280;">Debt/Equity</td><td style="font-size:12px;font-weight:600;text-align:right;">{fmt_num(debt_eq, 2)}</td></tr>
+                      <tr><td style="font-size:12px;color:#6b7280;">Rev. Growth YoY</td><td style="font-size:12px;font-weight:600;text-align:right;color:{pct_color(rev_growth)};">{fmt_pct(rev_growth)}</td></tr>
+                      <tr><td style="font-size:12px;color:#6b7280;">EPS Growth YoY</td><td style="font-size:12px;font-weight:600;text-align:right;color:{pct_color(eps_growth)};">{fmt_pct(eps_growth)}</td></tr>
+                      <tr><td style="font-size:12px;color:#6b7280;">Dividend Yield</td><td style="font-size:12px;font-weight:600;text-align:right;">{fmt_num(div_yield)}%</td></tr>
+                    </table>
+                  </div>
+                </td>
+
+                <!-- TECNICA -->
+                <td width="50%" style="padding-left:10px;vertical-align:top;">
+                  <div style="background:#f8fafc;border-radius:8px;padding:14px;">
+                    <div style="font-size:12px;font-weight:700;color:#1e3a5f;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:10px;border-bottom:1px solid #e5e7eb;padding-bottom:6px;">📈 Analisi Tecnica</div>
+                    <table width="100%" cellpadding="3">
+                      <tr><td style="font-size:12px;color:#6b7280;">Perf. 6 Mesi</td><td style="font-size:12px;font-weight:600;text-align:right;color:{perf6_color};">{fmt_pct(perf_6m)}</td></tr>
+                      <tr><td style="font-size:12px;color:#6b7280;">Perf. 3 Mesi</td><td style="font-size:12px;font-weight:600;text-align:right;color:{perf3_color};">{fmt_pct(perf_3m)}</td></tr>
+                      <tr><td style="font-size:12px;color:#6b7280;">RSI (14)</td><td style="font-size:12px;font-weight:600;text-align:right;">{fmt_num(rsi)} {rsi_trend}</td></tr>
+                      <tr><td style="font-size:12px;color:#6b7280;">MA 50</td><td style="font-size:12px;font-weight:600;text-align:right;">{fmt_price(ma50)}</td></tr>
+                      <tr><td style="font-size:12px;color:#6b7280;">MA 200</td><td style="font-size:12px;font-weight:600;text-align:right;">{fmt_price(ma200)}</td></tr>
+                      <tr><td style="font-size:12px;color:#6b7280;">Max 52 sett.</td><td style="font-size:12px;font-weight:600;text-align:right;">{fmt_price(high_52w)}</td></tr>
+                      <tr><td style="font-size:12px;color:#6b7280;">Min 52 sett.</td><td style="font-size:12px;font-weight:600;text-align:right;">{fmt_price(low_52w)}</td></tr>
+                      <tr><td style="font-size:12px;color:#6b7280;">Dist. da Max 52w</td><td style="font-size:12px;font-weight:600;text-align:right;color:{pct_color(dist_52w)};">{fmt_pct(dist_52w)}</td></tr>
+                      <tr><td style="font-size:12px;color:#6b7280;">Volume</td><td style="font-size:12px;font-weight:600;text-align:right;">{volume_trend}</td></tr>
+                    </table>
+
+                    <!-- SUPPORTI/RESISTENZE -->
+                    <div style="margin-top:12px;border-top:1px solid #e5e7eb;padding-top:10px;">
+                      <div style="font-size:11px;font-weight:700;color:#1e3a5f;text-transform:uppercase;margin-bottom:6px;">Livelli Chiave</div>
+                      <table width="100%" cellpadding="2">
+                        <tr>
+                          <td style="font-size:11px;color:#dc2626;font-weight:600;">🔴 Res. 2</td>
+                          <td style="font-size:11px;font-weight:700;text-align:right;color:#dc2626;">{fmt_price(res2)}</td>
+                        </tr>
+                        <tr>
+                          <td style="font-size:11px;color:#f97316;font-weight:600;">🟠 Res. 1</td>
+                          <td style="font-size:11px;font-weight:700;text-align:right;color:#f97316;">{fmt_price(res1)}</td>
+                        </tr>
+                        <tr>
+                          <td colspan="2" style="text-align:center;padding:3px 0;">
+                            <span style="background:#dbeafe;color:#1d4ed8;padding:2px 10px;border-radius:10px;font-size:11px;font-weight:700;">▶ PREZZO: {fmt_price(price)}</span>
+                          </td>
+                        </tr>
+                        <tr>
+                          <td style="font-size:11px;color:#16a34a;font-weight:600;">🟢 Sup. 1</td>
+                          <td style="font-size:11px;font-weight:700;text-align:right;color:#16a34a;">{fmt_price(sup1)}</td>
+                        </tr>
+                        <tr>
+                          <td style="font-size:11px;color:#15803d;font-weight:600;">🟢 Sup. 2</td>
+                          <td style="font-size:11px;font-weight:700;text-align:right;color:#15803d;">{fmt_price(sup2)}</td>
+                        </tr>
+                      </table>
+                    </div>
+                  </div>
+                </td>
+
+              </tr>
+            </table>
+
+          </div>
+        </div>
+        """
+
+    # SKIPPED NOTES
+    skipped_html = ""
+    if skipped_notes:
+        items = "".join(f"<li style='font-size:12px;color:#6b7280;margin-bottom:4px;'>{n}</li>" for n in skipped_notes)
+        skipped_html = f"""
+        <div style="background:#fef9c3;border:1px solid #fde68a;border-radius:8px;padding:14px 18px;margin-top:10px;">
+          <div style="font-size:13px;font-weight:700;color:#92400e;margin-bottom:8px;">⚠️ Filtri/Campi non applicati</div>
+          <ul style="margin:0;padding-left:18px;">{items}</ul>
+        </div>
+        """
 
     return f"""
+    <!DOCTYPE html>
     <html>
-      <body style="font-family:Arial, sans-serif;">
-        <h2>Top 5 Azioni USA - {today}</h2>
-        <table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;">
-          <tr>
-            <th>Rank</th><th>Ticker</th><th>Settore</th><th>Score</th><th>Giudizio</th>
-            <th>Prezzo</th><th>Target</th><th>Upside</th>
-          </tr>
-          {rows}
-        </table>
-        {note}
-      </body>
+    <head><meta charset="UTF-8"></head>
+    <body style="margin:0;padding:0;background:#f1f5f9;font-family:'Segoe UI',Helvetica,Arial,sans-serif;">
+
+      <div style="max-width:680px;margin:0 auto;padding:24px 16px;">
+
+        <!-- HEADER -->
+        <div style="background:linear-gradient(135deg,#1e3a5f 0%,#2563eb 100%);border-radius:12px;padding:28px 32px;margin-bottom:24px;text-align:center;">
+          <div style="font-size:32px;margin-bottom:8px;">🇺🇸</div>
+          <div style="color:#ffffff;font-size:24px;font-weight:800;letter-spacing:-0.5px;">Top 5 Azioni USA</div>
+          <div style="color:#93c5fd;font-size:14px;margin-top:6px;">{today} &nbsp;·&nbsp; Large Cap &nbsp;·&nbsp; Momentum + Quality</div>
+          <div style="color:#bfdbfe;font-size:12px;margin-top:4px;">Market Cap &gt;10B · EPS &gt;10% · Rev &gt;10% · ROE &gt;15% · ROIC &gt;12%</div>
+        </div>
+
+        <!-- CARDS -->
+        {cards_html}
+
+        <!-- FOOTER -->
+        <div style="text-align:center;padding:16px;color:#9ca3af;font-size:11px;border-top:1px solid #e5e7eb;margin-top:8px;">
+          Report generato automaticamente · Solo a scopo informativo · Non costituisce consulenza finanziaria
+        </div>
+
+        {skipped_html}
+
+      </div>
+    </body>
     </html>
     """
 
