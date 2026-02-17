@@ -1,22 +1,16 @@
 """
-╔══════════════════════════════════════════════════════════════╗
-║         STOCK SCREENER USA - TradingView API                 ║
-║         Filtri identici al tuo screener TradingView          ║
-║         Invio automatico email con analisi dettagliata       ║
-╚══════════════════════════════════════════════════════════════╝
+screener_usa_tradingview.py
 
-REQUISITI (requirements.txt):
-- tradingview-screener
-- yfinance
-- pandas
-- numpy
+Stock screener USA:
+- Query TradingView (tradingview-screener)
+- Arricchimento via yfinance
+- Top 5 con score
+- Invio email via common_utility.mailer (secrets in GitHub Actions)
 
-EMAIL:
-- usa common_utility/mailer.py
-- legge da env/secrets:
-  GMAIL_SENDER
-  GMAIL_RECIPIENT
-  GMAIL_PASSWORD
+Richiesta chiave:
+- NON fermarti se un campo TradingView non esiste.
+  => rimuovi campo + eventuali filtri collegati e riprova.
+- In fondo alla mail aggiungi la lista dei campi rimossi/mancanti.
 """
 
 import time
@@ -31,9 +25,8 @@ warnings.filterwarnings("ignore")
 from tradingview_screener import Query, Column
 import yfinance as yf
 
-# ✅ usa SOLO questo (niente doppioni)
+# IMPORT UNICO: niente doppioni tipo "from mailer import ..."
 from common_utility.mailer import send_email
-
 
 
 # ============================================================
@@ -41,7 +34,7 @@ from common_utility.mailer import send_email
 # ============================================================
 
 def safe_get(val, default=0.0) -> float:
-    """Converte in float in modo sicuro (None/NaN/stringhe vuote)."""
+    """Convertitore robusto per numeri (None/NaN/stringhe vuote -> default)."""
     if val is None or (isinstance(val, float) and np.isnan(val)):
         return default
     try:
@@ -52,36 +45,38 @@ def safe_get(val, default=0.0) -> float:
 
 def extract_unknown_field(err: Exception) -> str | None:
     """
-    Prova a estrarre il nome del campo dal messaggio TradingView:
-    es: Unknown field "earnings_per_share_diluted_yoy"
+    Estrae il nome del campo sconosciuto dal messaggio TradingView.
+    Esempio body: Unknown field "earnings_per_share_diluted_yoy"
     """
-    msg = str(err)
-    m = re.search(r'Unknown field\s+"([^"]+)"', msg)
+    s = str(err)
+    m = re.search(r'Unknown field\s+\\"([^\\"]+)\\"', s)
+    if not m:
+        m = re.search(r'Unknown field\s+"([^"]+)"', s)
     return m.group(1) if m else None
 
 
 # ============================================================
-# 1) TRADINGVIEW SCREENER (ROBUSTO)
+# 1) TRADINGVIEW SCREENER con retry su campi sconosciuti
 # ============================================================
 
-def run_tradingview_screener_robust() -> tuple[pd.DataFrame, list[str]]:
+def run_tradingview_screener() -> tuple[pd.DataFrame, list[str]]:
     """
-    Esegue lo screener TradingView, ma se un campo non esiste:
-    - lo rimuove da select
-    - rimuove i filtri che dipendono da quel campo
-    - riprova
+    Esegue screener TradingView.
+    Se TradingView risponde "Unknown field", rimuove quel campo e riprova.
+
     Ritorna:
-    - DataFrame risultati
-    - lista filtri/campi saltati (da mettere in fondo alla mail)
+    - df risultati
+    - lista campi rimossi/mancanti (da mettere in fondo alla mail)
     """
 
     print("\n🔍 Interrogo TradingView Screener...")
     print("   (USA, Large Cap, Momentum + Quality)")
 
-    # --- campi che vorresti leggere (se esistono) ---
+    removed_fields: list[str] = []
+
+    # Campi che proviamo a selezionare (se qualcuno non esiste, lo togliamo)
     select_fields = [
-        "name",
-        "close",
+        "name", "close",
         "market_cap_basic",
         "price_earnings_ttm",
         "earnings_per_share_diluted_yoy_growth_ttm",
@@ -100,99 +95,109 @@ def run_tradingview_screener_robust() -> tuple[pd.DataFrame, list[str]]:
         "SMA50",
     ]
 
-    # --- filtri: li definiamo come "oggetti" così possiamo toglierli se manca un campo ---
-    filters = [
-        ("Market Cap > 10B", ["market_cap_basic"], lambda: Column("market_cap_basic") > 10_000_000_000),
+    # Filtri: li teniamo “agganciati” ai campi per poterli togliere se il campo non esiste
+    def build_where(active_fields: set[str]):
+        w = []
 
-        ("EPS YoY TTM > 10%", ["earnings_per_share_diluted_yoy_growth_ttm"],
-         lambda: Column("earnings_per_share_diluted_yoy_growth_ttm") > 10),
+        # Size
+        if "market_cap_basic" in active_fields:
+            w.append(Column("market_cap_basic") > 10_000_000_000)
 
-        ("Revenue YoY TTM > 10%", ["total_revenue_yoy_growth_ttm"],
-         lambda: Column("total_revenue_yoy_growth_ttm") > 10),
+        # Growth
+        if "earnings_per_share_diluted_yoy_growth_ttm" in active_fields:
+            w.append(Column("earnings_per_share_diluted_yoy_growth_ttm") > 10)
+        if "total_revenue_yoy_growth_ttm" in active_fields:
+            w.append(Column("total_revenue_yoy_growth_ttm") > 10)
 
-        ("Perf 6M > 5%", ["Perf.6M"], lambda: Column("Perf.6M") > 5),
-        ("Perf 3M > 3%", ["Perf.3M"], lambda: Column("Perf.3M") > 3),
+        # Momentum
+        if "Perf.6M" in active_fields:
+            w.append(Column("Perf.6M") > 5)
+        if "Perf.3M" in active_fields:
+            w.append(Column("Perf.3M") > 3)
 
-        ("ROE > 15%", ["return_on_equity"], lambda: Column("return_on_equity") > 15),
-        ("ROIC > 12%", ["return_on_invested_capital"], lambda: Column("return_on_invested_capital") > 12),
-        ("Op Margin > 10%", ["operating_margin"], lambda: Column("operating_margin") > 10),
+        # Quality
+        if "return_on_equity" in active_fields:
+            w.append(Column("return_on_equity") > 15)
+        if "return_on_invested_capital" in active_fields:
+            w.append(Column("return_on_invested_capital") > 12)
+        if "operating_margin" in active_fields:
+            w.append(Column("operating_margin") > 10)
 
-        ("Debt/Equity < 1", ["debt_to_equity"], lambda: Column("debt_to_equity") < 1),
+        # Leverage
+        if "debt_to_equity" in active_fields:
+            w.append(Column("debt_to_equity") < 1)
 
-        ("Prezzo > SMA200", ["close", "SMA200"], lambda: Column("close") > Column("SMA200")),
-        ("Prezzo > SMA50", ["close", "SMA50"], lambda: Column("close") > Column("SMA50")),
+        # Trend (richiede SMA)
+        if "close" in active_fields and "SMA200" in active_fields:
+            w.append(Column("close") > Column("SMA200"))
+        if "close" in active_fields and "SMA50" in active_fields:
+            w.append(Column("close") > Column("SMA50"))
 
-        ("RSI 45-75", ["RSI"], lambda: (Column("RSI") >= 45) & (Column("RSI") <= 75)),
+        # RSI
+        if "RSI" in active_fields:
+            w.append(Column("RSI") >= 45)
+            w.append(Column("RSI") <= 75)
 
-        ("Volume > 2M", ["volume"], lambda: Column("volume") > 2_000_000),
+        # Liquidity
+        if "volume" in active_fields:
+            w.append(Column("volume") > 2_000_000)
 
-        ("P/E 10-45", ["price_earnings_ttm"],
-         lambda: (Column("price_earnings_ttm") >= 10) & (Column("price_earnings_ttm") <= 45)),
-    ]
+        # Valuation
+        if "price_earnings_ttm" in active_fields:
+            w.append(Column("price_earnings_ttm") >= 10)
+            w.append(Column("price_earnings_ttm") <= 45)
 
-    skipped_notes: list[str] = []
-    max_attempts = 8
+        return w
 
-    for attempt in range(1, max_attempts + 1):
+    # Retry loop
+    active = set(select_fields)
+
+    for attempt in range(1, 11):
         try:
-            # costruisco query
+            where_clauses = build_where(active)
+
             q = (
                 Query()
                 .set_markets("america")
-                .select(*select_fields)
+                .select(*[f for f in select_fields if f in active])
+                .where(*where_clauses)
+                .order_by("Perf.6M", ascending=False)  # se Perf.6M manca, TradingView potrebbe comunque accettare, ma in caso la togliamo
+                .limit(50)
             )
 
-            # applico filtri attivi
-            active_conditions = [f[2]() for f in filters]
-            if active_conditions:
-                q = q.where(*active_conditions)
-
-            _, df = (
-                q.order_by("Perf.6M", ascending=False)
-                 .limit(50)
-                 .get_scanner_data()
-            )
-
+            _, df = q.get_scanner_data()
             print(f"✅ TradingView ha restituito {len(df)} azioni")
-            return df, skipped_notes
+            return df, removed_fields
 
         except Exception as e:
             unknown = extract_unknown_field(e)
+
+            # Se non è un errore "unknown field", stoppo i retry (altrimenti loop inutile)
             if not unknown:
-                # errore non gestibile con fallback: lo mostro e chiudo
-                print(f"❌ Errore TradingView (non gestibile): {e}")
-                return pd.DataFrame(), skipped_notes
+                print(f"❌ Errore TradingView API (non gestito): {e}")
+                return pd.DataFrame(), removed_fields
 
-            # segno cosa ho saltato
-            skipped_notes.append(f'Campo non disponibile su TradingView: "{unknown}" (saltato)')
+            # Se è "unknown field", lo rimuovo e riprovo
+            if unknown in active:
+                active.remove(unknown)
+                removed_fields.append(unknown)
+                print(f"⚠️ Campo non supportato da TradingView: {unknown} -> rimosso (retry {attempt}/10)")
+                continue
 
-            # rimuovo campo dalla select se presente
-            if unknown in select_fields:
-                select_fields = [x for x in select_fields if x != unknown]
+            # Se per qualche motivo non è in active, comunque fermiamoci
+            print(f"❌ Campo sconosciuto ma non presente in lista: {unknown}")
+            return pd.DataFrame(), removed_fields
 
-            # rimuovo filtri che dipendono da quel campo
-            new_filters = []
-            for name, deps, builder in filters:
-                if unknown in deps:
-                    skipped_notes.append(f'Filtro non applicato: {name} (manca "{unknown}")')
-                else:
-                    new_filters.append((name, deps, builder))
-            filters = new_filters
-
-            print(f"⚠️ TradingView: campo sconosciuto '{unknown}'. Riprovo senza quel campo/filtro... ({attempt}/{max_attempts})")
-            time.sleep(0.3)
-
-    # se arrivo qui, ho finito i tentativi
-    print("❌ Troppi fallback, stop.")
-    return pd.DataFrame(), skipped_notes
+    print("❌ Troppi retry: impossibile completare lo screener.")
+    return pd.DataFrame(), removed_fields
 
 
 # ============================================================
-# 2) DETTAGLI YFINANCE (uguale a prima)
+# 2) YFINANCE DETAILS
 # ============================================================
 
 def get_yfinance_details(ticker: str) -> dict:
-    """Arricchisce un ticker con dati tecnici/fondamentali via yfinance."""
+    """Arricchisce ticker con dati tecnici/target via yfinance (best effort)."""
     try:
         stock = yf.Ticker(ticker)
         hist = stock.history(period="1y")
@@ -235,6 +240,7 @@ def get_yfinance_details(ticker: str) -> dict:
 
         target = min(target, price * 1.40)
         upside = ((target / price) - 1) * 100
+
         timeframe = "6-9 mesi" if upside > 20 else ("9-12 mesi" if upside > 10 else "12+ mesi")
 
         company_name = info.get("longName") or info.get("shortName") or ticker
@@ -270,15 +276,17 @@ def get_yfinance_details(ticker: str) -> dict:
             "div_yield": float(div_yield),
             "profit_margin": float(profit_margin),
         }
+
     except Exception:
         return {}
 
 
 # ============================================================
-# 3) SCORING + TOP5 (qui tengo la tua logica base, senza cambiare troppo)
+# 3) SCORING + TOP5
 # ============================================================
 
 def calculate_score(row: dict) -> int:
+    """Score semplice (best effort). Se manca qualche campo, safe_get lo gestisce."""
     score = 0
 
     perf6m = safe_get(row.get("Perf.6M"), 0)
@@ -336,6 +344,7 @@ def calculate_score(row: dict) -> int:
 
 
 def build_top5(df_tv: pd.DataFrame) -> list[dict]:
+    """Top5 con max 2 titoli per settore + arricchimento yfinance."""
     if df_tv.empty:
         return []
 
@@ -377,49 +386,9 @@ def build_top5(df_tv: pd.DataFrame) -> list[dict]:
             "sector": sector,
             "score": score,
             "sentiment": sentiment,
-
             "price": price,
-            "mcap": safe_get(row.get("market_cap_basic"), 0) / 1e9,
-            "pe": safe_get(row.get("price_earnings_ttm"), 0),
-            "roe": safe_get(row.get("return_on_equity"), 0),
-            "roic": safe_get(row.get("return_on_invested_capital"), 0),
-            "op_margin": safe_get(row.get("operating_margin"), 0),
-            "debt_eq": safe_get(row.get("debt_to_equity"), 0),
-
-            "rev_growth": safe_get(row.get("total_revenue_yoy_growth_ttm"), 0),
-            "eps_growth": safe_get(row.get("earnings_per_share_diluted_yoy_growth_ttm"), 0),
-
-            "perf_6m": safe_get(row.get("Perf.6M"), 0),
-            "perf_3m": safe_get(row.get("Perf.3M"), 0),
-            "rsi": safe_get(row.get("RSI"), 0),
-            "volume": safe_get(row.get("volume"), 0),
-
-            "div_yield": details.get("div_yield", safe_get(row.get("dividends_yield_current"), 0)),
-
             "target": details.get("target", price * 1.10),
-            "target_source": details.get("target_source", "Stima"),
             "upside": details.get("upside", 10),
-            "timeframe": details.get("timeframe", "12+ mesi"),
-            "vol_annual": details.get("vol_annual", 30),
-
-            "ma50": details.get("ma50", price),
-            "ma200": details.get("ma200", price),
-
-            "high_52w": details.get("high_52w", price),
-            "low_52w": details.get("low_52w", price),
-            "dist_52w": details.get("dist_52w", 0),
-
-            "support_1": details.get("support_1", price * 0.95),
-            "support_2": details.get("support_2", price * 0.85),
-            "resistance_1": details.get("resistance_1", price * 1.05),
-            "resistance_2": details.get("resistance_2", price * 1.15),
-
-            "rsi_trend": details.get("rsi_trend", ""),
-            "volume_trend": details.get("volume_trend", ""),
-
-            "forward_pe": details.get("forward_pe", 0),
-            "peg": details.get("peg", 0),
-            "profit_margin": details.get("profit_margin", 0),
         })
 
         seen_sectors[sector] = seen_sectors.get(sector, 0) + 1
@@ -429,37 +398,57 @@ def build_top5(df_tv: pd.DataFrame) -> list[dict]:
 
 
 # ============================================================
-# 4) HTML EMAIL
+# 4) EMAIL HTML (semplice + nota campi rimossi)
 # ============================================================
 
-def generate_html(stocks: list[dict], skipped_notes: list[str]) -> str:
-    """
-    Qui devi incollare la TUA generate_html completa.
-    Io aggiungo solo una sezione finale "Filtri non applicati".
-    """
-
+def generate_html(stocks: list[dict], removed_fields: list[str]) -> str:
+    """HTML minimale: tabella + nota finale campi rimossi."""
     today = datetime.now().strftime("%d/%m/%Y")
 
-    # --- qui metti la tua HTML completa, io ti lascio un placeholder ---
-    html = f"""
-    <html><body>
-      <h1>🇺🇸 Top 5 Azioni USA - {today}</h1>
-      <p>Qui incolla la tua generate_html completa.</p>
+    rows = ""
+    for i, s in enumerate(stocks, start=1):
+        rows += (
+            f"<tr>"
+            f"<td>#{i}</td>"
+            f"<td><b>{s['ticker']}</b></td>"
+            f"<td>{s['sector']}</td>"
+            f"<td>{s['score']}</td>"
+            f"<td>{s['sentiment']}</td>"
+            f"<td>${s['price']:.2f}</td>"
+            f"<td>${s['target']:.2f}</td>"
+            f"<td>+{s['upside']:.1f}%</td>"
+            f"</tr>"
+        )
+
+    note = ""
+    if removed_fields:
+        note = (
+            "<hr>"
+            "<p style='font-size:12px;color:#6b7280;'>"
+            "<b>Nota:</b> alcuni campi TradingView non erano disponibili e sono stati ignorati: "
+            f"{', '.join(sorted(set(removed_fields)))}"
+            "</p>"
+        )
+
+    return f"""
+    <html>
+      <body style="font-family:Arial, sans-serif;">
+        <h2>Top 5 Azioni USA - {today}</h2>
+        <table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;">
+          <tr>
+            <th>Rank</th><th>Ticker</th><th>Settore</th><th>Score</th><th>Giudizio</th>
+            <th>Prezzo</th><th>Target</th><th>Upside</th>
+          </tr>
+          {rows}
+        </table>
+        {note}
+      </body>
+    </html>
     """
-
-    # ✅ Sezione finale: filtri saltati
-    if skipped_notes:
-        html += "<hr><h3>⚠️ Filtri/Campi non applicati</h3><ul>"
-        for n in skipped_notes:
-            html += f"<li>{n}</li>"
-        html += "</ul>"
-
-    html += "</body></html>"
-    return html
 
 
 # ============================================================
-# MAIN
+# 5) MAIN
 # ============================================================
 
 def main():
@@ -470,18 +459,28 @@ def main():
     print("=" * 65)
     print(f"⏰ Avvio: {start.strftime('%d/%m/%Y %H:%M')}")
 
-    # 1) TradingView robusto
-    df_tv, skipped = run_tradingview_screener_robust()
+    df_tv, removed_fields = run_tradingview_screener()
 
-    # Se TradingView non ritorna nulla, NON mi fermo:
-    # mando comunque una mail con nota (come vuoi tu: non deve piantarsi)
-    top5 = build_top5(df_tv) if not df_tv.empty else []
+    if df_tv.empty:
+        print("\n❌ Nessuna azione trovata o errore TradingView.")
+        # comunque provo a mandare una mail “vuota” con nota errore
+        subject = f"🇺🇸 Screener USA - Nessun risultato ({datetime.now().strftime('%d/%m/%Y')})"
+        body = generate_html([], removed_fields) + "<p>Nessun risultato dallo screener.</p>"
+        send_email(subject, body, is_html=True)
+        return
 
-    # 2) Email
+    top5 = build_top5(df_tv)
+
+    print(f"\n{'='*65}")
+    print("🏆 TOP 5 AZIONI USA")
+    print(f"{'='*65}")
+    for i, s in enumerate(top5):
+        print(f"#{i} {s['ticker']:6} | Score: {s['score']:3d} | ${s['price']:8.2f} → ${s['target']:8.2f} (+{s['upside']:5.1f}%) | {s['sector']}")
+
     today = datetime.now().strftime("%d/%m/%Y")
     subject = f"🇺🇸 Top 5 Azioni USA - {today}"
+    html = generate_html(top5, removed_fields)
 
-    html = generate_html(top5, skipped)
     print("\n📧 Invio email...", end=" ")
     ok = send_email(subject, html, is_html=True)
     print("OK" if ok else "KO")
